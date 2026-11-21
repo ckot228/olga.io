@@ -1,0 +1,21 @@
+import {readFile,writeFile} from 'node:fs/promises';
+import {execFileSync} from 'node:child_process';
+import sharp from 'sharp';
+const config=JSON.parse((await readFile('src/config/hotel.json','utf8')).replace(/^\uFEFF/,''));
+const escape=s=>s.replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;');
+let origin='';
+if(config.siteUrl){const u=new URL(config.siteUrl);if(u.protocol!=='https:'||u.pathname!=='/'||u.search||u.hash)throw new Error('siteUrl должен быть HTTPS origin без пути, параметров и фрагмента');origin=u.origin;}
+let html=await readFile('dist/index.html','utf8');
+const rendered=execFileSync(process.execPath,['--import','tsx','scripts/render.tsx'],{encoding:'utf8',maxBuffer:5e6});
+html=html.replace('<div id="root"></div>',`<div id="root">${rendered}</div>`);
+const schema={'@context':'https://schema.org','@type':'Hotel',name:config.name,numberOfRooms:config.studioCount,...(config.phone?{telephone:config.phone}:{}),...(config.address?{address:{'@type':'PostalAddress',addressLocality:config.city,streetAddress:config.streetAddress,addressCountry:'RU'}}:{}),hasMap:config.mapUrl,...(origin?{url:origin+'/'}:{})};
+const metadata=(origin?`<link rel="canonical" href="${escape(origin)}/"/><meta property="og:url" content="${escape(origin)}/"/><meta property="og:image" content="${escape(origin)}/og.jpg"/><meta property="og:image:width" content="1200"/><meta property="og:image:height" content="630"/><meta property="og:image:alt" content="Гостиница Ольга, Краснодар"/><meta name="twitter:card" content="summary_large_image"/>`:'')+`<script type="application/ld+json">${JSON.stringify(schema).replaceAll('<','\\u003c')}</script>`;
+html=html.replace('<!-- SEO_ORIGIN -->',metadata);
+if(origin)html=html.replace('noindex,follow','index,follow');
+await writeFile('dist/index.html',html);
+await writeFile('dist/robots.txt',`User-agent: *\nAllow: /\n${origin?`Sitemap: ${origin}/sitemap.xml\n`:''}`);
+await writeFile('dist/sitemap.xml',`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${origin?`<url><loc>${escape(origin)}/</loc></url>`:''}</urlset>\n`);
+await writeFile('dist/404.html','<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Страница не найдена — Ольга</title><body style="background:#241711;color:#f7f2ea;font:20px system-ui;padding:10vw"><h1>Страница не найдена</h1><a href="/olga.io/" style="color:#e8c991">Вернуться на главную</a></body></html>');
+const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630"><rect width="1200" height="630" fill="#241711"/><path d="M0 70C430 120 0 600 900 600M1200 0C700 300 1400 400 600 600" fill="none" stroke="#80603b" stroke-width="2"/><path d="m550 150 23 18 27-40 27 40 23-18-10 55h-80Z" fill="none" stroke="#e8c991" stroke-width="3"/><text x="600" y="335" text-anchor="middle" font-family="Georgia" font-size="110" letter-spacing="18" fill="#e8c991">ОЛЬГА</text><text x="600" y="405" text-anchor="middle" font-family="Arial" font-size="22" letter-spacing="8" fill="#c9a16b">ГОСТИНИЦА · КРАСНОДАР</text><text x="600" y="500" text-anchor="middle" font-family="Arial" font-size="25" fill="#f7f2ea">Комфортные номера-студии</text></svg>`;
+await sharp(Buffer.from(svg)).jpeg({quality:90}).toFile('dist/og.jpg');
+console.log(`Готов статический HTML и SEO. ${origin||'Домен не задан: noindex, пустой sitemap.'}`);
